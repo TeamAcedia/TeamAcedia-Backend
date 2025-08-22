@@ -1,0 +1,77 @@
+package main
+
+import (
+	"context"
+	"log"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"teamacedia/backend/internal/api"
+	"teamacedia/backend/internal/config"
+	"teamacedia/backend/internal/db"
+)
+
+func main() {
+	// Load config file
+	cfg, err := config.LoadConfig("config.ini")
+	if err != nil {
+		log.Fatalf("Failed to load config: %v", err)
+	}
+
+	config.Config = cfg
+
+	// Initialize DB
+	err = db.InitDB("teamacedia.db")
+	if err != nil {
+		log.Fatalf("Failed to initialize DB: %v", err)
+	}
+
+	// Setup HTTP routes
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/register/", api.RegisterHandler)
+	mux.HandleFunc("/api/register", api.RegisterHandler)
+	mux.HandleFunc("/api/login/", api.LoginHandler)
+	mux.HandleFunc("/api/login", api.LoginHandler)
+	mux.HandleFunc("/api/verify-session/", api.VerifySessionHandler)
+	mux.HandleFunc("/api/verify-session", api.VerifySessionHandler)
+	mux.HandleFunc("/api/server/join/", api.JoinServerHandler)
+	mux.HandleFunc("/api/server/join", api.JoinServerHandler)
+	mux.HandleFunc("/api/server/leave/", api.LeaveServerHandler)
+	mux.HandleFunc("/api/server/leave", api.LeaveServerHandler)
+	mux.HandleFunc("/api/server/players/", api.GetServerPlayersHandler)
+	mux.HandleFunc("/api/server/players", api.GetServerPlayersHandler)
+
+	srv := &http.Server{
+		Addr:    ":22222",
+		Handler: mux,
+	}
+
+	// Channel to listen for OS signals
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+
+	// Run server in goroutine
+	go func() {
+		log.Println("TeamAcedia-Backend running on :22222")
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("Failed to start server: %v", err)
+		}
+	}()
+
+	// Block until signal is received
+	<-stop
+	log.Println("Shutting down server...")
+
+	// Graceful shutdown with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := srv.Shutdown(ctx); err != nil {
+		log.Fatalf("Server forced to shutdown: %v", err)
+	}
+
+	log.Println("Server exited cleanly")
+}
