@@ -491,7 +491,7 @@ func GetSelectedCapeHandler(w http.ResponseWriter, r *http.Request) {
 
 	var body struct {
 		Token string `json:"token"`
-		User  string `json:"string"`
+		User  string `json:"user"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
