@@ -19,6 +19,7 @@ type Session struct {
 
 type Config struct {
 	TokenValidDurationHours int
+	DefaultCapeIDs          string
 }
 
 type ServerMember struct {
@@ -47,3 +48,10 @@ const (
 	DatabaseError             BackendError = "database error"
 	InvalidSessionError       BackendError = "invalid session"
 )
+
+type Cape struct {
+	CapeID         string
+	CapeTexture    string // base64
+	CapePreview    string // base64
+	CapeAnimLength int    // in frames
+}

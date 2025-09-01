@@ -17,6 +17,7 @@ func LoadConfig(path string) (*models.Config, error) {
 
 	cfg := &models.Config{
 		TokenValidDurationHours: cfgFile.Section("").Key("TokenValidDurationHours").MustInt(12),
+		DefaultCapeIDs:          cfgFile.Section("").Key("DefaultCapeIDs").String(),
 	}
 
 	return cfg, nil

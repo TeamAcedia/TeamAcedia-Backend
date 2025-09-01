@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"teamacedia/backend/internal/api"
+	"teamacedia/backend/internal/asset_manager"
 	"teamacedia/backend/internal/config"
 	"teamacedia/backend/internal/db"
 )
@@ -28,6 +29,14 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to initialize DB: %v", err)
 	}
+	go db.StartScheduler()
+
+	// Load Cosmetics
+	capesList, err := asset_manager.LoadCapes("./cosmetics/capes")
+	if err != nil {
+		log.Fatal(err)
+	}
+	asset_manager.Capes = capesList
 
 	// Setup HTTP routes
 	mux := http.NewServeMux()
@@ -43,6 +52,14 @@ func main() {
 	mux.HandleFunc("/api/server/leave", api.LeaveServerHandler)
 	mux.HandleFunc("/api/server/players/", api.GetServerPlayersHandler)
 	mux.HandleFunc("/api/server/players", api.GetServerPlayersHandler)
+	mux.HandleFunc("/api/cosmetics/capes/", api.GetCapesHandler)
+	mux.HandleFunc("/api/cosmetics/capes", api.GetCapesHandler)
+	mux.HandleFunc("/api/users/capes/", api.GetUserCapesHandler)
+	mux.HandleFunc("/api/users/capes", api.GetUserCapesHandler)
+	mux.HandleFunc("/api/users/capes/set_selected/", api.SetSelectedCapeHandler)
+	mux.HandleFunc("/api/users/capes/set_selected", api.SetSelectedCapeHandler)
+	mux.HandleFunc("/api/users/capes/get_selected/", api.GetSelectedCapeHandler)
+	mux.HandleFunc("/api/users/capes/get_selected", api.GetSelectedCapeHandler)
 
 	srv := &http.Server{
 		Addr:    ":22222",

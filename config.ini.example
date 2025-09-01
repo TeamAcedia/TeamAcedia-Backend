@@ -1,2 +1,3 @@
 # configuration
 TokenValidDurationHours = 12
+DefaultCapeIDs = crown

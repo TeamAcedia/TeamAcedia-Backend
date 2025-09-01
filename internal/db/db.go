@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"teamacedia/backend/internal/asset_manager"
 	"teamacedia/backend/internal/models"
 	"time"
 
@@ -55,6 +56,19 @@ func InitDB(path string) error {
     	session_id INTEGER NOT NULL,
 		FOREIGN KEY (user_id) REFERENCES users(id)
     	FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+	);
+
+	CREATE TABLE IF NOT EXISTS user_allowed_capes (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		user_id INTEGER NOT NULL,
+		cape_id TEXT NOT NULL,
+		FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+	);
+
+	CREATE TABLE IF NOT EXISTS user_selected_cape (
+		user_id INTEGER NOT NULL UNIQUE,
+		cape_id TEXT NOT NULL,
+		FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 	);
 
 	`
@@ -234,4 +248,76 @@ func GetServerMembersByAddress(server *models.Server) ([]models.ServerMember, er
 	}
 
 	return members, nil
+}
+
+// GetAllowedCapes returns all capes a user can access
+func GetAllowedCapes(user models.User, cfg models.Config) ([]models.Cape, error) {
+	allowedMap := make(map[string]models.Cape)
+
+	// Add default capes from config
+	for _, id := range strings.Split(cfg.DefaultCapeIDs, ",") {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+
+		for _, cape := range asset_manager.Capes {
+			if cape.CapeID == id {
+				allowedMap[id] = cape
+				break
+			}
+		}
+	}
+
+	// Query DB for user-specific capes
+	rows, err := DB.Query("SELECT cape_id FROM user_allowed_capes WHERE user_id = ?", user.ID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var capeID string
+		if err := rows.Scan(&capeID); err != nil {
+			return nil, err
+		}
+
+		for _, cape := range asset_manager.Capes {
+			if cape.CapeID == capeID {
+				allowedMap[capeID] = cape
+				break
+			}
+		}
+	}
+
+	// Convert map to slice
+	result := make([]models.Cape, 0, len(allowedMap))
+	for _, cape := range allowedMap {
+		result = append(result, cape)
+	}
+
+	return result, nil
+}
+
+// GetSelectedCapeID returns the currently selected cape_id for the given user
+func GetSelectedCapeID(user models.User) (string, error) {
+	var capeID string
+	err := DB.QueryRow("SELECT cape_id FROM user_selected_cape WHERE user_id = ?", user.ID).Scan(&capeID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return "crown", nil
+		}
+		return "crown", err
+	}
+	return capeID, nil
+}
+
+// SetSelectedCapeID sets or updates the selected cape_id for the given user
+func SetSelectedCapeID(user models.User, capeID string) error {
+	_, err := DB.Exec(`
+		INSERT INTO user_selected_cape (user_id, cape_id) 
+		VALUES (?, ?)
+		ON CONFLICT(user_id) DO UPDATE SET cape_id = excluded.cape_id
+	`, user.ID, capeID)
+	return err
 }

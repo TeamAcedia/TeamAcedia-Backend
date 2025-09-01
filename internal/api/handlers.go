@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"teamacedia/backend/internal/asset_manager"
 	"teamacedia/backend/internal/config"
 	"teamacedia/backend/internal/db"
 	"teamacedia/backend/internal/models"
@@ -338,4 +339,203 @@ func GetServerPlayersHandler(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewEncoder(w).Encode(map[string][]map[string]string{"players": playerList}); err != nil {
 		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
 	}
+}
+
+// GetCapesHandler verifies the session token and returns a list of capes.
+func GetCapesHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var body struct {
+		Token string `json:"token"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	if body.Token == "" {
+		http.Error(w, "Missing required fields", http.StatusBadRequest)
+		return
+	}
+
+	// Verify session
+	_, err := db.VerifySession(body.Token)
+	if err != nil {
+		if err == models.InvalidSessionError {
+			http.Error(w, "Invalid session", http.StatusUnauthorized)
+		} else {
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+		}
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	if err := json.NewEncoder(w).Encode(asset_manager.Capes); err != nil {
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+	}
+}
+
+// GetUserCapesHandler verifies the session token and returns a list of capes the user is allowed to use.
+func GetUserCapesHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var body struct {
+		Token string `json:"token"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	if body.Token == "" {
+		http.Error(w, "Missing required fields", http.StatusBadRequest)
+		return
+	}
+
+	session, err := db.VerifySession(body.Token)
+	if err != nil {
+		http.Error(w, "Invalid session", http.StatusUnauthorized)
+		return
+	}
+
+	user, err := db.GetUserByID(session.UserID)
+	if err != nil {
+		http.Error(w, "User not found", http.StatusInternalServerError)
+		return
+	}
+
+	capes, err := db.GetAllowedCapes(*user, *config.Config)
+	if err != nil {
+		http.Error(w, "Failed to get capes", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(capes)
+}
+
+// SetSelectedCapeHandler sets the user's currently selected cape.
+func SetSelectedCapeHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var body struct {
+		Token string `json:"token"`
+		Cape  string `json:"cape"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	if body.Token == "" || body.Cape == "" {
+		http.Error(w, "Missing required fields", http.StatusBadRequest)
+		return
+	}
+
+	session, err := db.VerifySession(body.Token)
+	if err != nil {
+		http.Error(w, "Invalid session", http.StatusUnauthorized)
+		return
+	}
+
+	user, err := db.GetUserByID(session.UserID)
+	if err != nil {
+		http.Error(w, "User not found", http.StatusInternalServerError)
+		return
+	}
+
+	// Ensure the user is allowed to use this cape
+	allowed, err := db.GetAllowedCapes(*user, *config.Config)
+	if err != nil {
+		http.Error(w, "Failed to get capes", http.StatusInternalServerError)
+		return
+	}
+
+	isAllowed := false
+	for _, c := range allowed {
+		if c.CapeID == body.Cape {
+			isAllowed = true
+			break
+		}
+	}
+	if !isAllowed {
+		http.Error(w, "Cape not allowed", http.StatusForbidden)
+		return
+	}
+
+	if err := db.SetSelectedCapeID(*user, body.Cape); err != nil {
+		http.Error(w, "Failed to set cape", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"message": "Cape selected"})
+}
+
+// GetSelectedCapeHandler returns the user's currently active cape.
+func GetSelectedCapeHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var body struct {
+		Token string `json:"token"`
+		User  string `json:"string"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	if body.Token == "" {
+		http.Error(w, "Missing required fields", http.StatusBadRequest)
+		return
+	}
+
+	session, err := db.VerifySession(body.Token)
+	if err != nil {
+		http.Error(w, "Invalid session", http.StatusUnauthorized)
+		return
+	}
+
+	var cape string
+
+	if body.User == "" {
+		user, err := db.GetUserByID(session.UserID)
+		if err != nil {
+			http.Error(w, "User not found", http.StatusInternalServerError)
+			return
+		}
+
+		cape, err = db.GetSelectedCapeID(*user)
+		if err != nil {
+			http.Error(w, "Failed to get selected cape", http.StatusInternalServerError)
+			return
+		}
+	} else {
+		user, err := db.GetUserByUsername(body.User)
+		if err != nil {
+			http.Error(w, "User not found", http.StatusInternalServerError)
+			return
+		}
+		cape, err = db.GetSelectedCapeID(*user)
+		if err != nil {
+			http.Error(w, "Failed to get selected cape", http.StatusInternalServerError)
+			return
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"selected_cape": cape})
 }
