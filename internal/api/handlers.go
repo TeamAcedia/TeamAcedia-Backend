@@ -86,12 +86,6 @@ func LoginHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Clear any existing sessions for the user
-	if err := db.ClearAllSessions(user); err != nil {
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
-	}
-
 	session, err := db.CreateSession(user, config.Config.TokenValidDurationHours)
 	if err != nil {
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
