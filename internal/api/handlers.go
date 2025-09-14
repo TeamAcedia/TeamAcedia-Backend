@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"strconv"
 	"teamacedia/backend/internal/asset_manager"
@@ -366,10 +367,12 @@ func GetCapesHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Encode JSON directly to response
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
 	if err := json.NewEncoder(w).Encode(asset_manager.Capes); err != nil {
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		// At this point headers may already be sent, so we can’t change the status code
+		// Just log the error
+		log.Printf("failed to encode capes response: %v", err)
 	}
 }
 
