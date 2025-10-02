@@ -13,6 +13,8 @@ import (
 	"teamacedia/backend/internal/asset_manager"
 	"teamacedia/backend/internal/config"
 	"teamacedia/backend/internal/db"
+
+	"github.com/rs/cors"
 )
 
 func main() {
@@ -61,9 +63,20 @@ func main() {
 	mux.HandleFunc("/api/users/capes/get_selected/", api.GetSelectedCapeHandler)
 	mux.HandleFunc("/api/users/capes/get_selected", api.GetSelectedCapeHandler)
 
+	// Configure CORS middleware
+	c := cors.New(cors.Options{
+		AllowedOrigins:   []string{"*"},
+		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowedHeaders:   []string{"Content-Type"},
+		AllowCredentials: false,
+		MaxAge:           300,
+	})
+
+	handler := c.Handler(mux)
+
 	srv := &http.Server{
 		Addr:    ":22222",
-		Handler: mux,
+		Handler: handler,
 	}
 
 	// Channel to listen for OS signals
