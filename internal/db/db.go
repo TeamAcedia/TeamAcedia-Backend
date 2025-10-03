@@ -36,7 +36,8 @@ func InitDB(path string) error {
 	CREATE TABLE IF NOT EXISTS users (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		username TEXT UNIQUE NOT NULL,
-		password_hash TEXT NOT NULL
+		password_hash TEXT NOT NULL,
+		account_type TEXT DEFAULT 'User'
 	);
 				
 	CREATE TABLE IF NOT EXISTS sessions (
@@ -54,7 +55,7 @@ func InitDB(path string) error {
 		server_port INTEGER NOT NULL,
 		joined_username TEXT NOT NULL,
     	session_id INTEGER NOT NULL,
-		FOREIGN KEY (user_id) REFERENCES users(id)
+		FOREIGN KEY (user_id) REFERENCES users(id),
     	FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
 	);
 
@@ -70,11 +71,35 @@ func InitDB(path string) error {
 		cape_id TEXT NOT NULL,
 		FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 	);
-
 	`
 	_, err = DB.Exec(schema)
 	if err != nil {
 		return fmt.Errorf("failed to create schema: %w", err)
+	}
+
+	// Migration
+	var count int
+	err = DB.QueryRow(`
+		SELECT COUNT(*) 
+		FROM pragma_table_info('users') 
+		WHERE name = 'account_type';
+	`).Scan(&count)
+	if err != nil {
+		return fmt.Errorf("failed to check users table columns: %w", err)
+	}
+
+	if count == 0 {
+		// Column doesn't exist, add it
+		_, err = DB.Exec(`ALTER TABLE users ADD COLUMN account_type TEXT DEFAULT 'User';`)
+		if err != nil {
+			return fmt.Errorf("failed to add account_type column: %w", err)
+		}
+
+		// Backfill existing rows
+		_, err = DB.Exec(`UPDATE users SET account_type = 'User' WHERE account_type IS NULL;`)
+		if err != nil {
+			return fmt.Errorf("failed to backfill account_type column: %w", err)
+		}
 	}
 
 	return nil
@@ -180,9 +205,9 @@ func ClearAllSessions(user *models.User) error {
 }
 
 func GetUserByID(userID int) (*models.User, error) {
-	row := DB.QueryRow("SELECT id, username, password_hash FROM users WHERE id = ?", userID)
+	row := DB.QueryRow("SELECT id, username, password_hash, account_type FROM users WHERE id = ?", userID)
 	var user models.User
-	err := row.Scan(&user.ID, &user.Username, &user.PasswordHash)
+	err := row.Scan(&user.ID, &user.Username, &user.PasswordHash, &user.AccountType)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, models.InvalidCredentialsError
@@ -193,9 +218,9 @@ func GetUserByID(userID int) (*models.User, error) {
 }
 
 func GetUserByUsername(username string) (*models.User, error) {
-	row := DB.QueryRow("SELECT id, username, password_hash FROM users WHERE username = ?", username)
+	row := DB.QueryRow("SELECT id, username, password_hash, account_type FROM users WHERE username = ?", username)
 	var user models.User
-	err := row.Scan(&user.ID, &user.Username, &user.PasswordHash)
+	err := row.Scan(&user.ID, &user.Username, &user.PasswordHash, &user.AccountType)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, models.InvalidCredentialsError
@@ -319,5 +344,15 @@ func SetSelectedCapeID(user models.User, capeID string) error {
 		VALUES (?, ?)
 		ON CONFLICT(user_id) DO UPDATE SET cape_id = excluded.cape_id
 	`, user.ID, capeID)
+	return err
+}
+
+// SetUserAccountType sets the account_type for the given user
+func SetUserAccountType(user models.User, accountType string) error {
+	_, err := DB.Exec(`
+		UPDATE users
+		SET account_type = ?
+		WHERE id = ?
+	`, accountType, user.ID)
 	return err
 }

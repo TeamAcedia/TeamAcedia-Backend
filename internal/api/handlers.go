@@ -536,3 +536,108 @@ func GetSelectedCapeHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"selected_cape": cape})
 }
+
+// GetUserAccountType returns the users account type
+func GetUserAccountType(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var body struct {
+		Token string `json:"token"`
+		User  string `json:"user"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	if body.Token == "" {
+		http.Error(w, "Missing required fields", http.StatusBadRequest)
+		return
+	}
+
+	session, err := db.VerifySession(body.Token)
+	if err != nil {
+		http.Error(w, "Invalid session", http.StatusUnauthorized)
+		return
+	}
+
+	var account_type string
+
+	if body.User == "" {
+		user, err := db.GetUserByID(session.UserID)
+		if err != nil {
+			http.Error(w, "User not found", http.StatusInternalServerError)
+			return
+		}
+
+		account_type = user.AccountType
+	} else {
+		user, err := db.GetUserByUsername(body.User)
+		if err != nil {
+			http.Error(w, "User not found", http.StatusInternalServerError)
+			return
+		}
+		account_type = user.AccountType
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"account_type": account_type})
+}
+
+// SetUserAccountType sets the users account type
+func SetUserAccountType(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var body struct {
+		Token       string `json:"token"`
+		AccountType string `json:"account_type"`
+		TargetUser  string `json:"target_username"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	if body.Token == "" || body.AccountType == "" || body.TargetUser == "" {
+		http.Error(w, "Missing required fields", http.StatusBadRequest)
+		return
+	}
+
+	session, err := db.VerifySession(body.Token)
+	if err != nil {
+		http.Error(w, "Invalid session", http.StatusUnauthorized)
+		return
+	}
+
+	user, err := db.GetUserByID(session.UserID)
+	if err != nil {
+		http.Error(w, "User not found", http.StatusInternalServerError)
+		return
+	}
+
+	// Ensure the user is allowed to set account types
+	target_user, err := db.GetUserByUsername(body.TargetUser)
+	if err != nil {
+		http.Error(w, "Target user not found", http.StatusInternalServerError)
+		return
+	}
+
+	if target_user.AccountType != "Developer" {
+		http.Error(w, "You do not have permission to do this", http.StatusForbidden)
+		return
+	}
+
+	if err := db.SetUserAccountType(*user, body.AccountType); err != nil {
+		http.Error(w, "Failed to set account type", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"message": "Set account type"})
+}

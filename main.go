@@ -62,6 +62,10 @@ func main() {
 	mux.HandleFunc("/api/users/capes/set_selected", api.SetSelectedCapeHandler)
 	mux.HandleFunc("/api/users/capes/get_selected/", api.GetSelectedCapeHandler)
 	mux.HandleFunc("/api/users/capes/get_selected", api.GetSelectedCapeHandler)
+	mux.HandleFunc("/api/users/set_account_type", api.SetUserAccountType)
+	mux.HandleFunc("/api/users/set_account_type/", api.SetUserAccountType)
+	mux.HandleFunc("/api/users/g_account_type", api.GetUserAccountType)
+	mux.HandleFunc("/api/users/get_account_type/", api.GetUserAccountType)
 
 	// Configure CORS middleware
 	c := cors.New(cors.Options{
