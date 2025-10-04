@@ -66,6 +66,8 @@ func main() {
 	mux.HandleFunc("/api/users/set_account_type/", api.SetUserAccountType)
 	mux.HandleFunc("/api/users/get_account_type", api.GetUserAccountType)
 	mux.HandleFunc("/api/users/get_account_type/", api.GetUserAccountType)
+	mux.HandleFunc("/api/users/get_all", api.GetAllUsersHandler)
+	mux.HandleFunc("/api/users/get_all/", api.GetAllUsersHandler)
 
 	// Configure CORS middleware
 	c := cors.New(cors.Options{

@@ -628,16 +628,83 @@ func SetUserAccountType(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if target_user.AccountType != "Developer" {
+	if user.AccountType != "Developer" {
 		http.Error(w, "You do not have permission to do this", http.StatusForbidden)
 		return
 	}
 
-	if err := db.SetUserAccountType(*user, body.AccountType); err != nil {
+	if err := db.SetUserAccountType(*target_user, body.AccountType); err != nil {
 		http.Error(w, "Failed to set account type", http.StatusInternalServerError)
 		return
 	}
 
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{"message": "Set account type"})
+}
+
+// GetAllUsersHandler returns a list of all users (without passwords)
+func GetAllUsersHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var body struct {
+		Token string `json:"token"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	if body.Token == "" {
+		http.Error(w, "Missing required fields", http.StatusBadRequest)
+		return
+	}
+
+	// Verify the session
+	session, err := db.VerifySession(body.Token)
+	if err != nil {
+		http.Error(w, "Invalid session", http.StatusUnauthorized)
+		return
+	}
+
+	// Get the requesting user
+	user, err := db.GetUserByID(session.UserID)
+	if err != nil {
+		http.Error(w, "User not found", http.StatusInternalServerError)
+		return
+	}
+
+	// Permission check
+	if user.AccountType != "Developer" {
+		http.Error(w, "You do not have permission to do this", http.StatusForbidden)
+		return
+	}
+
+	// Fetch all users
+	users, err := db.GetAllUsers()
+	if err != nil {
+		http.Error(w, "Failed to fetch users", http.StatusInternalServerError)
+		return
+	}
+
+	// Strip passwords before returning
+	type userResponse struct {
+		ID          int    `json:"id"`
+		Username    string `json:"username"`
+		AccountType string `json:"account_type"`
+	}
+
+	var res []userResponse
+	for _, u := range users {
+		res = append(res, userResponse{
+			ID:          u.ID,
+			Username:    u.Username,
+			AccountType: u.AccountType,
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(res)
 }

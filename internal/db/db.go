@@ -356,3 +356,28 @@ func SetUserAccountType(user models.User, accountType string) error {
 	`, accountType, user.ID)
 	return err
 }
+
+// GetAllUsers retrieves all users from the database
+func GetAllUsers() ([]models.User, error) {
+	rows, err := DB.Query("SELECT id, username, password_hash, account_type FROM users")
+	if err != nil {
+		return nil, fmt.Errorf("failed to query users: %w", err)
+	}
+	defer rows.Close()
+
+	var users []models.User
+	for rows.Next() {
+		var user models.User
+		err := rows.Scan(&user.ID, &user.Username, &user.PasswordHash, &user.AccountType)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan user row: %w", err)
+		}
+		users = append(users, user)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating over users: %w", err)
+	}
+
+	return users, nil
+}
