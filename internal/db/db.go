@@ -11,6 +11,7 @@ import (
 	"strings"
 	"syscall"
 	"teamacedia/backend/internal/asset_manager"
+	"teamacedia/backend/internal/config"
 	"teamacedia/backend/internal/models"
 	"time"
 
@@ -70,6 +71,13 @@ func InitDB(path string) error {
 		user_id INTEGER NOT NULL UNIQUE,
 		cape_id TEXT NOT NULL,
 		FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+	);
+
+	CREATE TABLE IF NOT EXISTS reward_codes (
+		code_id TEXT NOT NULL UNIQUE,
+		code_reward TEXT NOT NULL,
+		code_uses INTEGER NOT NULL,
+		code_max_uses INTEGER NOT NULL
 	);
 	`
 	_, err = DB.Exec(schema)
@@ -361,7 +369,7 @@ func SetUserAccountType(user models.User, accountType string) error {
 func GetAllUsers() ([]models.User, error) {
 	rows, err := DB.Query("SELECT id, username, password_hash, account_type FROM users")
 	if err != nil {
-		return nil, fmt.Errorf("failed to query users: %w", err)
+		return nil, err
 	}
 	defer rows.Close()
 
@@ -370,14 +378,209 @@ func GetAllUsers() ([]models.User, error) {
 		var user models.User
 		err := rows.Scan(&user.ID, &user.Username, &user.PasswordHash, &user.AccountType)
 		if err != nil {
-			return nil, fmt.Errorf("failed to scan user row: %w", err)
+			return nil, err
 		}
 		users = append(users, user)
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating over users: %w", err)
+		return nil, err
 	}
 
 	return users, nil
+}
+
+// GenerateUniqueRewardCode generates a code in XXXX-YYYY format and ensures it doesn't exist in the database
+func GenerateUniqueRewardCode() (string, error) {
+	const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	b := make([]byte, 8)
+
+	_, err := rand.Read(b)
+	if err != nil {
+		return "", fmt.Errorf("failed to generate random bytes: %w", err)
+	}
+
+	for i := range 8 {
+		b[i] = letters[int(b[i])%len(letters)]
+	}
+
+	code := fmt.Sprintf("%s%s%s%s-%s%s%s%s",
+		string(b[0]), string(b[1]), string(b[2]), string(b[3]),
+		string(b[4]), string(b[5]), string(b[6]), string(b[7]),
+	)
+
+	// Check if code already exists
+	var exists int
+	err = DB.QueryRow("SELECT 1 FROM reward_codes WHERE code_id = ?", code).Scan(&exists)
+	if err != nil && err != sql.ErrNoRows {
+		return "", fmt.Errorf("failed to check existing reward code: %w", err)
+	}
+
+	if exists == 1 {
+		// Code exists, try again recursively
+		return GenerateUniqueRewardCode()
+	}
+
+	return code, nil
+}
+
+// GetAllRewardCodes retrieves all reward codes from the database
+func GetAllRewardCodes() ([]models.RewardCode, error) {
+	rows, err := DB.Query("SELECT code_id, code_reward, code_uses, code_max_uses FROM reward_codes")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var codes []models.RewardCode
+	for rows.Next() {
+		var code models.RewardCode
+		if err := rows.Scan(&code.CodeID, &code.CodeReward, &code.CodeUses, &code.CodeMaxUses); err != nil {
+			return nil, err
+		}
+		codes = append(codes, code)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return codes, nil
+}
+
+// CreateRewardCode inserts a new reward code into the database
+func CreateRewardCode(code models.RewardCode) error {
+	_, err := DB.Exec(`
+		INSERT INTO reward_codes (code_id, code_reward, code_uses, code_max_uses)
+		VALUES (?, ?, ?, ?)
+	`, code.CodeID, code.CodeReward, code.CodeUses, code.CodeMaxUses)
+	if err != nil {
+		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
+			return models.RewardAlreadyExistsError
+		}
+		return models.DatabaseError
+	}
+	return nil
+}
+
+// UpdateRewardCode updates an existing reward code’s values
+func UpdateRewardCode(code models.RewardCode) error {
+	result, err := DB.Exec(`
+		UPDATE reward_codes
+		SET code_reward = ?, code_uses = ?, code_max_uses = ?, code_id = ?
+		WHERE code_id = ?
+	`, code.CodeReward, code.CodeUses, code.CodeMaxUses, code.NewID, code.CodeID)
+	if err != nil {
+		return models.DatabaseError
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return models.DatabaseError
+	}
+
+	if rowsAffected == 0 {
+		return models.RewardNotFoundError
+	}
+
+	return nil
+}
+
+// RedeemRewardCode redeems a reward code for a user and adds the reward to their account
+func RedeemRewardCode(codeID string, user models.User) error {
+	tx, err := DB.Begin()
+	if err != nil {
+		return models.DatabaseError
+	}
+	defer tx.Rollback()
+
+	var code models.RewardCode
+	err = tx.QueryRow(`
+		SELECT code_id, code_reward, code_uses, code_max_uses
+		FROM reward_codes
+		WHERE code_id = ?
+	`, codeID).Scan(&code.CodeID, &code.CodeReward, &code.CodeUses, &code.CodeMaxUses)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return models.RewardNotFoundError
+		}
+		return models.DatabaseError
+	}
+
+	if code.CodeMaxUses != 0 && code.CodeUses >= code.CodeMaxUses {
+		return models.RewardMaxUsesError
+	}
+
+	_, err = tx.Exec(`
+		UPDATE reward_codes
+		SET code_uses = code_uses + 1
+		WHERE code_id = ?
+	`, codeID)
+	if err != nil {
+		return models.DatabaseError
+	}
+
+	var capes []models.Cape
+	capes, err = GetAllowedCapes(user, *config.Config)
+	if err != nil {
+		return models.DatabaseError
+	}
+
+	for _, cape := range capes {
+		if cape.CapeID == code.CodeReward {
+			return models.RewardAlreadyOwnedError
+		}
+	}
+
+	_, err = tx.Exec(`
+		INSERT INTO user_allowed_capes (user_id, cape_id)
+		VALUES (?, ?)
+	`, user.ID, code.CodeReward)
+	if err != nil {
+		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
+			return models.RewardAlreadyOwnedError
+		}
+		return models.DatabaseError
+	}
+
+	if err := tx.Commit(); err != nil {
+		return models.DatabaseError
+	}
+
+	return nil
+}
+
+func GetRewardCodeByID(codeID string) (*models.RewardCode, error) {
+	var code models.RewardCode
+	err := DB.QueryRow(`
+		SELECT code_id, code_reward, code_uses, code_max_uses
+		FROM reward_codes
+		WHERE code_id = ?
+	`, codeID).Scan(&code.CodeID, &code.CodeReward, &code.CodeUses, &code.CodeMaxUses)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, models.RewardNotFoundError
+		}
+		return nil, models.DatabaseError
+	}
+
+	return &code, nil
+}
+
+func DeleteRewardCode(codeID string) error {
+	result, err := DB.Exec("DELETE FROM reward_codes WHERE code_id = ?", codeID)
+	if err != nil {
+		return models.DatabaseError
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return models.DatabaseError
+	}
+	if rowsAffected == 0 {
+		return models.RewardNotFoundError
+	}
+
+	return nil
 }

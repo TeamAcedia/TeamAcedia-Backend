@@ -538,7 +538,7 @@ func GetSelectedCapeHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // GetUserAccountType returns the users account type
-func GetUserAccountType(w http.ResponseWriter, r *http.Request) {
+func GetUserAccountTypeHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -588,7 +588,7 @@ func GetUserAccountType(w http.ResponseWriter, r *http.Request) {
 }
 
 // SetUserAccountType sets the users account type
-func SetUserAccountType(w http.ResponseWriter, r *http.Request) {
+func SetUserAccountTypeHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -707,4 +707,301 @@ func GetAllUsersHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(res)
+}
+
+// RedeemRewardCode attempts to redeem the reward code for the user of the token
+func RedeemRewardCodeHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var body struct {
+		Token      string `json:"token"`
+		RewardCode string `json:"reward_code"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	if body.Token == "" || body.RewardCode == "" {
+		http.Error(w, "Missing required fields", http.StatusBadRequest)
+		return
+	}
+
+	session, err := db.VerifySession(body.Token)
+	if err != nil {
+		http.Error(w, "Invalid session", http.StatusUnauthorized)
+		return
+	}
+
+	user, err := db.GetUserByID(session.UserID)
+	if err != nil {
+		http.Error(w, "User not found", http.StatusInternalServerError)
+		return
+	}
+
+	err = db.RedeemRewardCode(body.RewardCode, *user)
+	if err != nil {
+		switch err {
+		case models.RewardNotFoundError:
+			http.Error(w, err.Error(), http.StatusNotFound)
+		case models.RewardMaxUsesError:
+			http.Error(w, err.Error(), http.StatusGone)
+		case models.RewardAlreadyOwnedError:
+			http.Error(w, err.Error(), http.StatusConflict)
+		case models.DatabaseError:
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+		default:
+			http.Error(w, "Unknown error", http.StatusInternalServerError)
+		}
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"message": "Reward redeemed successfully"})
+}
+
+// CreateRewardCode creates a reward code for given cosmetic id
+func CreateRewardCodeHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var body struct {
+		Token      string `json:"token"`
+		CosmeticID string `json:"cosmetic_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	if body.Token == "" || body.CosmeticID == "" {
+		http.Error(w, "Missing required fields", http.StatusBadRequest)
+		return
+	}
+
+	// Verify the session
+	session, err := db.VerifySession(body.Token)
+	if err != nil {
+		http.Error(w, "Invalid session", http.StatusUnauthorized)
+		return
+	}
+
+	// Get the requesting user
+	user, err := db.GetUserByID(session.UserID)
+	if err != nil {
+		http.Error(w, "User not found", http.StatusInternalServerError)
+		return
+	}
+
+	// Permission check
+	if user.AccountType != "Developer" {
+		http.Error(w, "You do not have permission to do this", http.StatusForbidden)
+		return
+	}
+
+	var rewardCode models.RewardCode
+	rewardCode.CodeReward = body.CosmeticID
+	rewardCode.CodeMaxUses = 0
+	rewardCode.CodeID, err = db.GenerateUniqueRewardCode()
+
+	if err != nil {
+		http.Error(w, "Failed to generate code", http.StatusInternalServerError)
+		return
+	}
+
+	err = db.CreateRewardCode(rewardCode)
+	if err != nil {
+		http.Error(w, "Failed to create code", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"message": "Reward code created successfully"})
+}
+
+// UpdateRewardCodeHandler updates an existing reward code
+func UpdateRewardCodeHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var body struct {
+		Token      string `json:"token"`
+		OldCodeID  string `json:"old_code_id"` // existing code to update
+		NewCodeID  string `json:"new_code_id"` // optional: new code ID
+		CosmeticID string `json:"cosmetic_id"` // new cosmetic ID
+		MaxUses    int    `json:"max_uses"`    // new max uses
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	if body.Token == "" || body.OldCodeID == "" || body.CosmeticID == "" {
+		http.Error(w, "Missing required fields", http.StatusBadRequest)
+		return
+	}
+
+	// Verify session and permissions
+	session, err := db.VerifySession(body.Token)
+	if err != nil {
+		http.Error(w, "Invalid session", http.StatusUnauthorized)
+		return
+	}
+
+	user, err := db.GetUserByID(session.UserID)
+	if err != nil {
+		http.Error(w, "User not found", http.StatusInternalServerError)
+		return
+	}
+	if user.AccountType != "Developer" {
+		http.Error(w, "You do not have permission to do this", http.StatusForbidden)
+		return
+	}
+
+	// Fetch existing code directly from DB
+	code, err := db.GetRewardCodeByID(body.OldCodeID)
+	if err != nil {
+		if err == models.RewardNotFoundError {
+			http.Error(w, "Reward code not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "Database error", http.StatusInternalServerError)
+		return
+	}
+
+	// Update values
+	code.CodeReward = body.CosmeticID
+	code.CodeMaxUses = body.MaxUses
+
+	// Update CodeID if provided
+	if body.NewCodeID != "" && body.NewCodeID != body.OldCodeID {
+		code.NewID = body.NewCodeID
+	} else {
+		code.NewID = body.OldCodeID
+	}
+
+	// Save changes
+	err = db.UpdateRewardCode(*code)
+	if err != nil {
+		if err == models.RewardNotFoundError {
+			http.Error(w, "Reward code not found", http.StatusNotFound)
+			return
+		} else if err == models.RewardAlreadyExistsError {
+			http.Error(w, "New reward code ID already exists", http.StatusConflict)
+			return
+		}
+		http.Error(w, "Failed to update reward code", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"message": "Reward code updated successfully"})
+}
+
+// DeleteRewardCodeHandler deletes a reward code
+func DeleteRewardCodeHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var body struct {
+		Token  string `json:"token"`
+		CodeID string `json:"code_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	if body.Token == "" || body.CodeID == "" {
+		http.Error(w, "Missing required fields", http.StatusBadRequest)
+		return
+	}
+
+	// Verify session and permissions
+	session, err := db.VerifySession(body.Token)
+	if err != nil {
+		http.Error(w, "Invalid session", http.StatusUnauthorized)
+		return
+	}
+
+	user, err := db.GetUserByID(session.UserID)
+	if err != nil {
+		http.Error(w, "User not found", http.StatusInternalServerError)
+		return
+	}
+	if user.AccountType != "Developer" {
+		http.Error(w, "You do not have permission to do this", http.StatusForbidden)
+		return
+	}
+
+	// Delete the code
+	err = db.DeleteRewardCode(body.CodeID)
+	if err != nil {
+		if err == models.RewardNotFoundError {
+			http.Error(w, "Reward code not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "Failed to delete reward code", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"message": "Reward code deleted successfully"})
+}
+
+// GetAllRewardCodesHandler returns all reward codes (Developer-only)
+func GetAllRewardCodesHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var body struct {
+		Token string `json:"token"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	if body.Token == "" {
+		http.Error(w, "Missing required fields", http.StatusBadRequest)
+		return
+	}
+
+	session, err := db.VerifySession(body.Token)
+	if err != nil {
+		http.Error(w, "Invalid session", http.StatusUnauthorized)
+		return
+	}
+
+	user, err := db.GetUserByID(session.UserID)
+	if err != nil {
+		http.Error(w, "User not found", http.StatusInternalServerError)
+		return
+	}
+
+	if user.AccountType != "Developer" {
+		http.Error(w, "You do not have permission to do this", http.StatusForbidden)
+		return
+	}
+
+	// Fetch reward codes
+	codes, err := db.GetAllRewardCodes()
+	if err != nil {
+		http.Error(w, "Failed to fetch reward codes", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(codes)
 }

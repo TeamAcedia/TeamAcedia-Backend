@@ -12,6 +12,12 @@ GET_CAPES_ENDPOINT = "/api/cosmetics/capes/"
 GET_USER_CAPES_ENDPOINT = "/api/users/capes/"
 SET_SELECTED_CAPE_ENDPOINT = "/api/users/capes/set_selected/"
 GET_SELECTED_CAPE_ENDPOINT = "/api/users/capes/get_selected/"
+GET_ALL_USERS_ENDPOINT = "/api/users/get_all/"
+CREATE_REWARD_ENDPOINT = "/api/rewards/create/"
+UPDATE_REWARD_ENDPOINT = "/api/rewards/update/"
+DELETE_REWARD_ENDPOINT = "/api/rewards/delete/"
+GET_ALL_REWARDS_ENDPOINT = "/api/rewards/get_all/"
+REDEEM_REWARD_ENDPOINT = "/api/rewards/redeem/"
 
 USERNAME = "testaccount"
 PASSWORD = "1234"
@@ -173,6 +179,87 @@ def test_get_selected_cape(session_token):
 	except Exception:
 		print("Get Selected Cape Response Text:", response.text)
 
+def test_get_all_users(session_token):
+	"""
+	Tests getting all users in the db.
+	"""
+	payload = {
+		"token": session_token,
+	}
+	response = requests.post(BASE_URL + GET_ALL_USERS_ENDPOINT, json=payload)
+	print("\n--- GetAllUsersHandler Test ---")
+	print("Status Code:", response.status_code)
+	try:
+		print("Response JSON:", response.json())
+	except Exception:
+		print("Response Text:", response.text)
+
+def test_create_reward_code(session_token, cosmetic_id="cape1"):
+	"""
+	Creates a reward code for a given cosmetic.
+	"""
+	payload = {
+		"token": session_token,
+		"cosmetic_id": cosmetic_id
+	}
+	response = requests.post(BASE_URL + CREATE_REWARD_ENDPOINT, json=payload)
+	print("Create Reward Code Status Code:", response.status_code)
+	try:
+		data = response.json()
+		print("Create Reward Code Response JSON:", data)
+	except Exception:
+		print("Create Reward Code Response Text:", response.text)
+
+def test_get_all_reward_codes(session_token):
+	"""
+	Retrieves all reward codes (Developer-only).
+	"""
+	payload = {"token": session_token}
+	response = requests.post(BASE_URL + GET_ALL_REWARDS_ENDPOINT, json=payload)
+	print("Get All Reward Codes Status Code:", response.status_code)
+	try:
+		data = response.json()
+		print("All Reward Codes:", data)
+		return data
+	except Exception:
+		print("Get All Reward Codes Response Text:", response.text)
+		return []
+
+def test_update_reward_code(session_token, code_id, new_code_id, cosmetic_id, max_uses):
+	"""
+	Updates a reward code's properties.
+	"""
+	payload = {
+		"token": session_token,
+		"old_code_id": code_id,
+		"new_code_id": new_code_id,
+		"cosmetic_id": cosmetic_id,
+		"max_uses": max_uses
+	}
+
+	response = requests.post(BASE_URL + UPDATE_REWARD_ENDPOINT, json=payload)
+	print(f"Update Reward Code ({code_id}) Status Code:", response.status_code)
+	try:
+		print("Update Reward Code Response JSON:", response.json())
+	except Exception:
+		print("Update Reward Code Response Text:", response.text)
+
+def test_redeem_reward_code(session_token, reward_code):
+	"""
+	Redeems a reward code for the user.
+	"""
+	payload = {
+		"token": session_token,
+		"reward_code": reward_code
+	}
+	response = requests.post(BASE_URL + REDEEM_REWARD_ENDPOINT, json=payload)
+	print(f"Redeem Reward Code ({reward_code}) Status Code:", response.status_code)
+	try:
+		print("Redeem Reward Code Response JSON:", response.json())
+	except Exception:
+		print("Redeem Reward Code Response Text:", response.text)
+
+
 if __name__ == "__main__":
 	test_register()
 	token = test_login()
@@ -185,3 +272,11 @@ if __name__ == "__main__":
 		test_get_user_capes(token)
 		test_set_selected_cape(token, cape_id="bats")
 		test_get_selected_cape(token)
+		test_get_all_users(token)
+		test_create_reward_code(token, cosmetic_id="bats")
+		codes = test_get_all_reward_codes(token)
+
+		if codes:
+			first_code = codes[0]["CodeID"]
+			test_update_reward_code(token, first_code, "TEST-TEST", "bats", 5)
+			test_redeem_reward_code(token, first_code)

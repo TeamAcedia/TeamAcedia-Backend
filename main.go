@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -16,6 +17,14 @@ import (
 
 	"github.com/rs/cors"
 )
+
+// registerEndpoint registers a handler for both /path and /path/ automatically
+func registerEndpoint(mux *http.ServeMux, path string, handler func(http.ResponseWriter, *http.Request)) {
+	mux.HandleFunc(path, handler)
+	if !strings.HasSuffix(path, "/") {
+		mux.HandleFunc(path+"/", handler)
+	}
+}
 
 func main() {
 	// Load config file
@@ -42,32 +51,25 @@ func main() {
 
 	// Setup HTTP routes
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/register/", api.RegisterHandler)
-	mux.HandleFunc("/api/register", api.RegisterHandler)
-	mux.HandleFunc("/api/login/", api.LoginHandler)
-	mux.HandleFunc("/api/login", api.LoginHandler)
-	mux.HandleFunc("/api/verify-session/", api.VerifySessionHandler)
-	mux.HandleFunc("/api/verify-session", api.VerifySessionHandler)
-	mux.HandleFunc("/api/server/join/", api.JoinServerHandler)
-	mux.HandleFunc("/api/server/join", api.JoinServerHandler)
-	mux.HandleFunc("/api/server/leave/", api.LeaveServerHandler)
-	mux.HandleFunc("/api/server/leave", api.LeaveServerHandler)
-	mux.HandleFunc("/api/server/players/", api.GetServerPlayersHandler)
-	mux.HandleFunc("/api/server/players", api.GetServerPlayersHandler)
-	mux.HandleFunc("/api/cosmetics/capes/", api.GetCapesHandler)
-	mux.HandleFunc("/api/cosmetics/capes", api.GetCapesHandler)
-	mux.HandleFunc("/api/users/capes/", api.GetUserCapesHandler)
-	mux.HandleFunc("/api/users/capes", api.GetUserCapesHandler)
-	mux.HandleFunc("/api/users/capes/set_selected/", api.SetSelectedCapeHandler)
-	mux.HandleFunc("/api/users/capes/set_selected", api.SetSelectedCapeHandler)
-	mux.HandleFunc("/api/users/capes/get_selected/", api.GetSelectedCapeHandler)
-	mux.HandleFunc("/api/users/capes/get_selected", api.GetSelectedCapeHandler)
-	mux.HandleFunc("/api/users/set_account_type", api.SetUserAccountType)
-	mux.HandleFunc("/api/users/set_account_type/", api.SetUserAccountType)
-	mux.HandleFunc("/api/users/get_account_type", api.GetUserAccountType)
-	mux.HandleFunc("/api/users/get_account_type/", api.GetUserAccountType)
-	mux.HandleFunc("/api/users/get_all", api.GetAllUsersHandler)
-	mux.HandleFunc("/api/users/get_all/", api.GetAllUsersHandler)
+
+	registerEndpoint(mux, "/api/register", api.RegisterHandler)
+	registerEndpoint(mux, "/api/login", api.LoginHandler)
+	registerEndpoint(mux, "/api/verify-session", api.VerifySessionHandler)
+	registerEndpoint(mux, "/api/server/join", api.JoinServerHandler)
+	registerEndpoint(mux, "/api/server/leave", api.LeaveServerHandler)
+	registerEndpoint(mux, "/api/server/players", api.GetServerPlayersHandler)
+	registerEndpoint(mux, "/api/cosmetics/capes", api.GetCapesHandler)
+	registerEndpoint(mux, "/api/users/capes", api.GetUserCapesHandler)
+	registerEndpoint(mux, "/api/users/capes/set_selected", api.SetSelectedCapeHandler)
+	registerEndpoint(mux, "/api/users/capes/get_selected", api.GetSelectedCapeHandler)
+	registerEndpoint(mux, "/api/users/set_account_type", api.SetUserAccountTypeHandler)
+	registerEndpoint(mux, "/api/users/get_account_type", api.GetUserAccountTypeHandler)
+	registerEndpoint(mux, "/api/users/get_all", api.GetAllUsersHandler)
+	registerEndpoint(mux, "/api/rewards/create", api.CreateRewardCodeHandler)
+	registerEndpoint(mux, "/api/rewards/update", api.UpdateRewardCodeHandler)
+	registerEndpoint(mux, "/api/rewards/delete", api.DeleteRewardCodeHandler)
+	registerEndpoint(mux, "/api/rewards/get_all", api.GetAllRewardCodesHandler)
+	registerEndpoint(mux, "/api/rewards/redeem", api.RedeemRewardCodeHandler)
 
 	// Configure CORS middleware
 	c := cors.New(cors.Options{
