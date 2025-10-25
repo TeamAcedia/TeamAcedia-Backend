@@ -2,12 +2,12 @@ package api
 
 import (
 	"encoding/json"
-	"log"
 	"net/http"
 	"strconv"
 	"teamacedia/backend/internal/asset_manager"
 	"teamacedia/backend/internal/config"
 	"teamacedia/backend/internal/db"
+	"teamacedia/backend/internal/discord"
 	"teamacedia/backend/internal/models"
 )
 
@@ -288,7 +288,7 @@ func GetServerPlayersHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Verify the session token
-	_, err := db.VerifySession(body.Token)
+	session, err := db.VerifySession(body.Token)
 	if err != nil {
 		if err == models.InvalidSessionError {
 			http.Error(w, "Invalid session", http.StatusUnauthorized)
@@ -316,8 +316,18 @@ func GetServerPlayersHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Build a slice of maps with joined name and actual username
 	playerList := make([]map[string]string, 0, len(members))
+	// Verify the querying user is on the server
+	for _, m := range members {
+		if m.UserID == session.UserID {
+			goto Authorized
+		}
+	}
+	// Unauthorized, send empty list and log fatal warning
+	discord.LogEventf("Unauthorized server player list request by user %d for server %s:%d", session.UserID, body.ServerAddress, portInt)
+	goto SendResults
+Authorized:
+	// Build a slice of maps with joined name and actual username
 	for _, m := range members {
 		user, err := db.GetUserByID(m.UserID)
 		if err != nil {
@@ -328,7 +338,9 @@ func GetServerPlayersHandler(w http.ResponseWriter, r *http.Request) {
 			"username":    user.Username,
 		})
 	}
+	goto SendResults
 
+SendResults:
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	if err := json.NewEncoder(w).Encode(map[string][]map[string]string{"players": playerList}); err != nil {
@@ -372,7 +384,7 @@ func GetCapesHandler(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewEncoder(w).Encode(asset_manager.Capes); err != nil {
 		// At this point headers may already be sent, so we can’t change the status code
 		// Just log the error
-		log.Printf("failed to encode capes response: %v", err)
+		discord.LogEventf("failed to encode capes response: %v", err)
 	}
 }
 

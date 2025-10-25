@@ -18,6 +18,8 @@ func LoadConfig(path string) (*models.Config, error) {
 	cfg := &models.Config{
 		TokenValidDurationHours: cfgFile.Section("").Key("TokenValidDurationHours").MustInt(12),
 		DefaultCapeIDs:          cfgFile.Section("").Key("DefaultCapeIDs").String(),
+		LoggerWebhookUrl:        cfgFile.Section("").Key("LoggerWebhookUrl").String(),
+		LoggerWebhookUsername:   cfgFile.Section("").Key("LoggerWebhookUsername").String(),
 	}
 
 	return cfg, nil

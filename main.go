@@ -14,6 +14,7 @@ import (
 	"teamacedia/backend/internal/asset_manager"
 	"teamacedia/backend/internal/config"
 	"teamacedia/backend/internal/db"
+	"teamacedia/backend/internal/discord"
 
 	"github.com/rs/cors"
 )
@@ -93,23 +94,23 @@ func main() {
 
 	// Run server in goroutine
 	go func() {
-		log.Println("TeamAcedia-Backend running on :22222")
+		discord.LogEvent("TeamAcedia-Backend running on :22222")
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("Failed to start server: %v", err)
+			discord.LogEventf("Failed to start server: %v", err)
 		}
 	}()
 
 	// Block until signal is received
 	<-stop
-	log.Println("Shutting down server...")
+	discord.LogEvent("Shutting down server...")
 
 	// Graceful shutdown with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	if err := srv.Shutdown(ctx); err != nil {
-		log.Fatalf("Server forced to shutdown: %v", err)
+		discord.LogEventf("Server forced to shutdown: %v", err)
 	}
 
-	log.Println("Server exited cleanly")
+	discord.LogEvent("Server exited cleanly")
 }

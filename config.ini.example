@@ -1,3 +1,5 @@
 # configuration
 TokenValidDurationHours = 12
 DefaultCapeIDs = crown,lenny,cloakv4
+LoggerWebhookURL = LOGGER_WEBHOOK_URL
+LoggerWebhookUsername = USERNAME_TO_SHOW_AS_WHEN_LOGGING_VIA_WEBHOOK

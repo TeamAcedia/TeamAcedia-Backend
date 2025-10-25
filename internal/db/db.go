@@ -5,13 +5,13 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"fmt"
-	"log"
 	"os"
 	"os/signal"
 	"strings"
 	"syscall"
 	"teamacedia/backend/internal/asset_manager"
 	"teamacedia/backend/internal/config"
+	"teamacedia/backend/internal/discord"
 	"teamacedia/backend/internal/models"
 	"time"
 
@@ -117,7 +117,7 @@ func StartScheduler() {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
-	log.Println("Database update scheduler started, updating every 30 seconds...")
+	discord.LogEvent("Database update scheduler started, updating every 30 seconds...")
 	UpdateSessions()
 
 	// Create a channel to listen for OS signals
@@ -129,7 +129,7 @@ func StartScheduler() {
 		case <-ticker.C:
 			UpdateSessions()
 		case <-sigs:
-			log.Println("Received interrupt signal, shutting down scheduler...")
+			discord.LogEvent("Received interrupt signal, shutting down scheduler...")
 			return
 		}
 	}

@@ -21,6 +21,8 @@ type Session struct {
 type Config struct {
 	TokenValidDurationHours int
 	DefaultCapeIDs          string
+	LoggerWebhookUrl        string // Webhook URL for logging events
+	LoggerWebhookUsername   string // Username to use when logging events via webhook url
 }
 
 type ServerMember struct {
