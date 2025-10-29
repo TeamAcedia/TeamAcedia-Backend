@@ -2,7 +2,9 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"reflect"
 	"strconv"
 	"teamacedia/backend/internal/asset_manager"
 	"teamacedia/backend/internal/config"
@@ -10,6 +12,30 @@ import (
 	"teamacedia/backend/internal/discord"
 	"teamacedia/backend/internal/models"
 )
+
+// SanitizeInput sends an error if any field is too long
+func SanitizeJSONInput(w http.ResponseWriter, data any) bool {
+	const maxFieldLength = 256
+
+	// Use reflection to iterate over fields
+	val := reflect.ValueOf(data)
+	if val.Kind() == reflect.Pointer {
+		val = val.Elem()
+	}
+
+	for i := 0; i < val.NumField(); i++ {
+		field := val.Field(i)
+		if field.Kind() == reflect.String {
+			if len(field.String()) > maxFieldLength {
+				discord.LogEventf("Field %s is too long", val.Type().Field(i).Name)
+				http.Error(w, fmt.Sprintf("Field %s is too long", val.Type().Field(i).Name), http.StatusBadRequest)
+				return false
+			}
+		}
+	}
+
+	return true
+}
 
 // RegisterHandler allows registering a new user
 func RegisterHandler(w http.ResponseWriter, r *http.Request) {
@@ -27,8 +53,17 @@ func RegisterHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !SanitizeJSONInput(w, &data) {
+		return
+	}
+
 	if data.Username == "" || data.Password == "" {
 		http.Error(w, "Missing username or password", http.StatusBadRequest)
+		return
+	}
+
+	if len(data.Username) > 20 || len(data.Password) > 64 {
+		http.Error(w, "Invalid username or password ( too long )", http.StatusBadRequest)
 		return
 	}
 
@@ -67,6 +102,10 @@ func LoginHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewDecoder(r.Body).Decode(&creds); err != nil {
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	if !SanitizeJSONInput(w, &creds) {
 		return
 	}
 
@@ -112,6 +151,10 @@ func VerifySessionHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	if !SanitizeJSONInput(w, &body) {
 		return
 	}
 
@@ -161,6 +204,10 @@ func JoinServerHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	if !SanitizeJSONInput(w, &body) {
 		return
 	}
 
@@ -224,6 +271,10 @@ func LeaveServerHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !SanitizeJSONInput(w, &body) {
+		return
+	}
+
 	if body.Token == "" || body.JoinedUsername == "" || body.ServerAddress == "" || body.ServerPort == "" {
 		http.Error(w, "Missing required fields", http.StatusBadRequest)
 		return
@@ -279,6 +330,10 @@ func GetServerPlayersHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	if !SanitizeJSONInput(w, &body) {
 		return
 	}
 
@@ -363,6 +418,10 @@ func GetCapesHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !SanitizeJSONInput(w, &body) {
+		return
+	}
+
 	if body.Token == "" {
 		http.Error(w, "Missing required fields", http.StatusBadRequest)
 		return
@@ -400,6 +459,10 @@ func GetUserCapesHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	if !SanitizeJSONInput(w, &body) {
 		return
 	}
 
@@ -443,6 +506,10 @@ func SetSelectedCapeHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	if !SanitizeJSONInput(w, &body) {
 		return
 	}
 
@@ -507,6 +574,10 @@ func GetSelectedCapeHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !SanitizeJSONInput(w, &body) {
+		return
+	}
+
 	if body.Token == "" {
 		http.Error(w, "Missing required fields", http.StatusBadRequest)
 		return
@@ -565,6 +636,10 @@ func GetUserAccountTypeHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !SanitizeJSONInput(w, &body) {
+		return
+	}
+
 	if body.Token == "" {
 		http.Error(w, "Missing required fields", http.StatusBadRequest)
 		return
@@ -613,6 +688,10 @@ func SetUserAccountTypeHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	if !SanitizeJSONInput(w, &body) {
 		return
 	}
 
@@ -666,6 +745,10 @@ func GetAllUsersHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	if !SanitizeJSONInput(w, &body) {
 		return
 	}
 
@@ -737,6 +820,10 @@ func RedeemRewardCodeHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !SanitizeJSONInput(w, &body) {
+		return
+	}
+
 	if body.Token == "" || body.RewardCode == "" {
 		http.Error(w, "Missing required fields", http.StatusBadRequest)
 		return
@@ -788,6 +875,10 @@ func CreateRewardCodeHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	if !SanitizeJSONInput(w, &body) {
 		return
 	}
 
@@ -852,6 +943,10 @@ func UpdateRewardCodeHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	if !SanitizeJSONInput(w, &body) {
 		return
 	}
 
@@ -933,6 +1028,10 @@ func DeleteRewardCodeHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !SanitizeJSONInput(w, &body) {
+		return
+	}
+
 	if body.Token == "" || body.CodeID == "" {
 		http.Error(w, "Missing required fields", http.StatusBadRequest)
 		return
@@ -982,6 +1081,10 @@ func GetAllRewardCodesHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	if !SanitizeJSONInput(w, &body) {
 		return
 	}
 
