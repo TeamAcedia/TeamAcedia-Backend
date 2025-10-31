@@ -79,6 +79,12 @@ func InitDB(path string) error {
 		code_uses INTEGER NOT NULL,
 		code_max_uses INTEGER NOT NULL
 	);
+
+	CREATE TABLE IF NOT EXISTS ip_history (
+		user_id INTEGER NOT NULL,
+		ip_address TEXT NOT NULL,
+		FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+	);
 	`
 	_, err = DB.Exec(schema)
 	if err != nil {
@@ -140,12 +146,46 @@ func UpdateSessions() error {
 	return err
 }
 
-func RegisterUser(user models.User) (*models.User, error) {
-	_, err := DB.Exec("INSERT INTO users (username, password_hash) VALUES (?, ?)", user.Username, user.PasswordHash)
+func CheckIPAccountLimit(ip string, maxAccounts int) (bool, error) {
+	var count int
+	err := DB.QueryRow("SELECT COUNT(*) FROM ip_history WHERE ip_address = ?", ip).Scan(&count)
+	if err != nil {
+		return false, models.DatabaseError
+	}
+	if count >= maxAccounts {
+		return false, nil
+	}
+	return true, nil
+}
+
+func IncrementIPAccountCount(ip string, user models.User) error {
+	_, err := DB.Exec("INSERT INTO ip_history (ip_address, user_id) VALUES (?, ?)", ip, user.ID)
+	return err
+}
+
+func RegisterUser(user models.User, ip string) (*models.User, error) {
+	allowed, err := CheckIPAccountLimit(ip, 3) // limit of 3 accounts per IP
+	if err != nil {
+		return &models.User{}, models.DatabaseError
+	}
+	if !allowed {
+		return &models.User{}, models.TooManyAccountsError
+	}
+
+	_, err = DB.Exec("INSERT INTO users (username, password_hash) VALUES (?, ?)", user.Username, user.PasswordHash)
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
 			return &models.User{}, models.AccountAlreadyExistsError
 		}
+		return &models.User{}, models.DatabaseError
+	}
+
+	createdUser, err := GetUserByUsername(user.Username) // get user to obtain ID
+	if err != nil {
+		return &models.User{}, models.DatabaseError
+	}
+	err = IncrementIPAccountCount(ip, *createdUser)
+	if err != nil {
 		return &models.User{}, models.DatabaseError
 	}
 	return GetUserByUsername(user.Username)

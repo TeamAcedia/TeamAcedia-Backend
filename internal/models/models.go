@@ -54,6 +54,7 @@ const (
 	RewardMaxUsesError        BackendError = "reward code has reached its max uses"
 	RewardAlreadyOwnedError   BackendError = "user already owns this reward"
 	RewardAlreadyExistsError  BackendError = "reward code already exists"
+	TooManyAccountsError      BackendError = "too many accounts created from this ip address"
 )
 
 type Cape struct {

@@ -33,7 +33,6 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
 	}
-
 	config.Config = cfg
 
 	// Initialize DB
@@ -72,6 +71,34 @@ func main() {
 	registerEndpoint(mux, "/api/rewards/get_all", api.GetAllRewardCodesHandler)
 	registerEndpoint(mux, "/api/rewards/redeem", api.RedeemRewardCodeHandler)
 
+	// Middleware to limit request size globally
+	const maxRequestBytes = int64(1 << 20) // 1 MB
+
+	limitBodySize := func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Early Content-Length check
+			if r.ContentLength > maxRequestBytes && r.ContentLength != -1 {
+				discord.LogEventf("Large request blocked: %s %s from %s (%d bytes)",
+					r.Method, r.URL.Path, r.RemoteAddr, r.ContentLength)
+				http.Error(w, "Request entity too large", http.StatusRequestEntityTooLarge)
+				return
+			}
+
+			// Wrap body with MaxBytesReader to catch chunked requests
+			r.Body = http.MaxBytesReader(w, r.Body, maxRequestBytes)
+
+			defer func() {
+				if rec := recover(); rec != nil {
+					discord.LogEventf("Recovered from panic: %v", rec)
+					http.Error(w, "Internal server error", http.StatusInternalServerError)
+				}
+			}()
+
+			// Run the next handler and detect read errors
+			next.ServeHTTP(w, r)
+		})
+	}
+
 	// Configure CORS middleware
 	c := cors.New(cors.Options{
 		AllowedOrigins:   []string{"*"},
@@ -81,11 +108,17 @@ func main() {
 		MaxAge:           300,
 	})
 
-	handler := c.Handler(mux)
+	// Chain middleware: CORS -> BodySizeLimiter -> Mux
+	handler := c.Handler(limitBodySize(mux))
 
 	srv := &http.Server{
-		Addr:    ":22222",
-		Handler: handler,
+		Addr:              ":22222",
+		Handler:           handler,
+		ReadTimeout:       5 * time.Second,
+		WriteTimeout:      10 * time.Second,
+		IdleTimeout:       30 * time.Second,
+		ReadHeaderTimeout: 3 * time.Second,
+		MaxHeaderBytes:    1 << 12, // 4 KB header limit
 	}
 
 	// Channel to listen for OS signals

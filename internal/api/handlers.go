@@ -3,15 +3,28 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"reflect"
+	"regexp"
 	"strconv"
+	"strings"
 	"teamacedia/backend/internal/asset_manager"
 	"teamacedia/backend/internal/config"
 	"teamacedia/backend/internal/db"
 	"teamacedia/backend/internal/discord"
 	"teamacedia/backend/internal/models"
 )
+
+// GetIP returns the client IP from r.RemoteAddr
+func GetIP(r *http.Request) string {
+	host, _, err := net.SplitHostPort(strings.TrimSpace(r.RemoteAddr))
+	if err != nil {
+		// fallback if RemoteAddr isn't in host:port form
+		return strings.TrimSpace(r.RemoteAddr)
+	}
+	return host
+}
 
 // SanitizeInput sends an error if any field is too long
 func SanitizeJSONInput(w http.ResponseWriter, data any) bool {
@@ -57,6 +70,9 @@ func RegisterHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	usernamePattern := regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
+	passwordPattern := regexp.MustCompile(`^[a-fA-F0-9]{64}$`) // SHA-256 hash
+
 	if data.Username == "" || data.Password == "" {
 		http.Error(w, "Missing username or password", http.StatusBadRequest)
 		return
@@ -67,15 +83,35 @@ func RegisterHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !usernamePattern.MatchString(data.Username) {
+		discord.LogEventf("Invalid username characters: %s from ip %s", data.Username, GetIP(r))
+		http.Error(w, "Invalid username characters ( must be a-z, A-Z, 0-9, -, _ )", http.StatusBadRequest)
+		return
+	}
+
+	if !passwordPattern.MatchString(data.Password) {
+		discord.LogEventf("Invalid password characters: %s from ip %s", data.Password, GetIP(r))
+		http.Error(w, "Invalid password format (must be SHA-256 hex)", http.StatusBadRequest)
+		return
+	}
+
 	user := models.User{
 		Username:     data.Username,
 		PasswordHash: data.Password,
 	}
-	_, err := db.RegisterUser(user)
+
+	ip := GetIP(r)
+
+	_, err := db.RegisterUser(user, ip)
 	if err != nil {
-		if err == models.AccountAlreadyExistsError {
+		switch err {
+		case models.AccountAlreadyExistsError:
 			http.Error(w, "Account already exists", http.StatusConflict)
-		} else {
+		case models.TooManyAccountsError:
+			discord.LogEventf("Too many accounts created from ip %s", GetIP(r))
+			http.Error(w, "Too many accounts created from this IP address", http.StatusTooManyRequests)
+		default:
+			discord.LogEventf("Error registering user: %v", err)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 		}
 		return
