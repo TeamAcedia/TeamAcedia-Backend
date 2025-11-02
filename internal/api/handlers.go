@@ -186,7 +186,7 @@ func LoginHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !CheckRateLimit(w, r, "login", 5) {
+	if !CheckRateLimit(w, r, "login", 15) { // 5 server connect / disconnects + 5 logins
 		return
 	}
 
@@ -296,7 +296,7 @@ func JoinServerHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !CheckRateLimit(w, r, "join_server", 3) {
+	if !CheckRateLimit(w, r, "join_server", 5) {
 		return
 	}
 
@@ -383,7 +383,7 @@ func LeaveServerHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !CheckRateLimit(w, r, "leave_server", 3) {
+	if !CheckRateLimit(w, r, "leave_server", 5) {
 		return
 	}
 
