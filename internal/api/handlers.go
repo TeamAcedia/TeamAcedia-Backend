@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -26,27 +27,67 @@ func GetIP(r *http.Request) string {
 	return host
 }
 
-// SanitizeInput sends an error if any field is too long
-func SanitizeJSONInput(w http.ResponseWriter, data any) bool {
+// SanitizeJSONInput sends an error if any string field is too long
+func SanitizeJSONInput(w http.ResponseWriter, r *http.Request, data any) bool {
 	const maxFieldLength = 256
 
-	// Use reflection to iterate over fields
 	val := reflect.ValueOf(data)
 	if val.Kind() == reflect.Pointer {
 		val = val.Elem()
 	}
 
+	clientIP := GetIP(r)
+
+	typeOfData := val.Type()
+
 	for i := 0; i < val.NumField(); i++ {
-		field := val.Field(i)
-		if field.Kind() == reflect.String {
-			if len(field.String()) > maxFieldLength {
-				discord.LogEventf("Field %s is too long", val.Type().Field(i).Name)
-				http.Error(w, fmt.Sprintf("Field %s is too long", val.Type().Field(i).Name), http.StatusBadRequest)
+		fieldInfo := typeOfData.Field(i)
+		fieldValue := val.Field(i)
+
+		if fieldValue.Kind() == reflect.String {
+			str := fieldValue.String()
+			length := len(str)
+
+			if length > maxFieldLength {
+				truncated := str
+				if len(truncated) > 200 {
+					truncated = truncated[:200] + "..."
+				}
+
+				discord.LogEventf(
+					"IP %s: Field %s too long (%d > %d). Value (truncated): %q",
+					clientIP,
+					fieldInfo.Name,
+					length,
+					maxFieldLength,
+					truncated,
+				)
+
+				http.Error(
+					w,
+					fmt.Sprintf("Field %s is too long", fieldInfo.Name),
+					http.StatusBadRequest,
+				)
 				return false
 			}
 		}
 	}
 
+	return true
+}
+
+func CheckRateLimit(w http.ResponseWriter, r *http.Request, action string, ratelimit int) bool {
+	ip := GetIP(r)
+	allowed, err := db.CheckAndUpdateRateLimit(ip, action, ratelimit)
+	if err != nil {
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return false
+	}
+	if !allowed {
+		discord.LogEventf("User violated request rate limit for action: %s from ip %s", action, GetIP(r))
+		http.Error(w, "Too many requests", http.StatusTooManyRequests)
+		return false
+	}
 	return true
 }
 
@@ -66,7 +107,7 @@ func RegisterHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !SanitizeJSONInput(w, &data) {
+	if !SanitizeJSONInput(w, r, &data) {
 		return
 	}
 
@@ -141,7 +182,11 @@ func LoginHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !SanitizeJSONInput(w, &creds) {
+	if !SanitizeJSONInput(w, r, &creds) {
+		return
+	}
+
+	if !CheckRateLimit(w, r, "login", 5) {
 		return
 	}
 
@@ -190,7 +235,11 @@ func VerifySessionHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !SanitizeJSONInput(w, &body) {
+	if !SanitizeJSONInput(w, r, &body) {
+		return
+	}
+
+	if !CheckRateLimit(w, r, "verify_session", 60) {
 		return
 	}
 
@@ -243,7 +292,11 @@ func JoinServerHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !SanitizeJSONInput(w, &body) {
+	if !SanitizeJSONInput(w, r, &body) {
+		return
+	}
+
+	if !CheckRateLimit(w, r, "join_server", 3) {
 		return
 	}
 
@@ -279,6 +332,25 @@ func JoinServerHandler(w http.ResponseWriter, r *http.Request) {
 		SessionID:      session.ID,
 	}
 	if err := db.InsertServerMember(member); err != nil {
+		if errors.Is(err, models.ErrUserAlreadyConnected) {
+			// Log detailed information about the duplicate connection attempt
+			discord.LogEventf(
+				"Duplicate connection attempt:\n"+
+					"User ID: %d\n"+
+					"Username: %s\n"+
+					"Server: %s:%d\n"+
+					"Session ID: %d\n",
+				member.UserID,
+				member.JoinedUsername,
+				member.ServerAddress,
+				member.ServerPort,
+				member.SessionID,
+			)
+
+			http.Error(w, "User already connected", http.StatusConflict)
+			return
+		}
+
 		http.Error(w, "Failed to register server join", http.StatusInternalServerError)
 		return
 	}
@@ -307,7 +379,11 @@ func LeaveServerHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !SanitizeJSONInput(w, &body) {
+	if !SanitizeJSONInput(w, r, &body) {
+		return
+	}
+
+	if !CheckRateLimit(w, r, "leave_server", 3) {
 		return
 	}
 
@@ -369,7 +445,11 @@ func GetServerPlayersHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !SanitizeJSONInput(w, &body) {
+	if !SanitizeJSONInput(w, r, &body) {
+		return
+	}
+
+	if !CheckRateLimit(w, r, "get_players", 20) {
 		return
 	}
 
@@ -454,7 +534,11 @@ func GetCapesHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !SanitizeJSONInput(w, &body) {
+	if !SanitizeJSONInput(w, r, &body) {
+		return
+	}
+
+	if !CheckRateLimit(w, r, "get_capes", 5) {
 		return
 	}
 
@@ -498,7 +582,11 @@ func GetUserCapesHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !SanitizeJSONInput(w, &body) {
+	if !SanitizeJSONInput(w, r, &body) {
+		return
+	}
+
+	if !CheckRateLimit(w, r, "get_user_capes", 5) {
 		return
 	}
 
@@ -545,7 +633,11 @@ func SetSelectedCapeHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !SanitizeJSONInput(w, &body) {
+	if !SanitizeJSONInput(w, r, &body) {
+		return
+	}
+
+	if !CheckRateLimit(w, r, "set_selected_cape", 5) {
 		return
 	}
 
@@ -610,7 +702,11 @@ func GetSelectedCapeHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !SanitizeJSONInput(w, &body) {
+	if !SanitizeJSONInput(w, r, &body) {
+		return
+	}
+
+	if !CheckRateLimit(w, r, "get_selected_cape", 60) {
 		return
 	}
 
@@ -672,7 +768,11 @@ func GetUserAccountTypeHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !SanitizeJSONInput(w, &body) {
+	if !SanitizeJSONInput(w, r, &body) {
+		return
+	}
+
+	if !CheckRateLimit(w, r, "get_user_account_type", 60) {
 		return
 	}
 
@@ -727,7 +827,7 @@ func SetUserAccountTypeHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !SanitizeJSONInput(w, &body) {
+	if !SanitizeJSONInput(w, r, &body) {
 		return
 	}
 
@@ -784,7 +884,7 @@ func GetAllUsersHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !SanitizeJSONInput(w, &body) {
+	if !SanitizeJSONInput(w, r, &body) {
 		return
 	}
 
@@ -856,7 +956,11 @@ func RedeemRewardCodeHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !SanitizeJSONInput(w, &body) {
+	if !SanitizeJSONInput(w, r, &body) {
+		return
+	}
+
+	if !CheckRateLimit(w, r, "redeem_reward_code", 5) {
 		return
 	}
 
@@ -914,7 +1018,7 @@ func CreateRewardCodeHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !SanitizeJSONInput(w, &body) {
+	if !SanitizeJSONInput(w, r, &body) {
 		return
 	}
 
@@ -982,7 +1086,7 @@ func UpdateRewardCodeHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !SanitizeJSONInput(w, &body) {
+	if !SanitizeJSONInput(w, r, &body) {
 		return
 	}
 
@@ -1064,7 +1168,7 @@ func DeleteRewardCodeHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !SanitizeJSONInput(w, &body) {
+	if !SanitizeJSONInput(w, r, &body) {
 		return
 	}
 
@@ -1120,7 +1224,7 @@ func GetAllRewardCodesHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !SanitizeJSONInput(w, &body) {
+	if !SanitizeJSONInput(w, r, &body) {
 		return
 	}
 

@@ -55,6 +55,7 @@ const (
 	RewardAlreadyOwnedError   BackendError = "user already owns this reward"
 	RewardAlreadyExistsError  BackendError = "reward code already exists"
 	TooManyAccountsError      BackendError = "too many accounts created from this ip address"
+	ErrUserAlreadyConnected   BackendError = "this session is already connected to a server"
 )
 
 type Cape struct {

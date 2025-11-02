@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -85,6 +86,15 @@ func InitDB(path string) error {
 		ip_address TEXT NOT NULL,
 		FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 	);
+
+	CREATE TABLE IF NOT EXISTS rate_limits (
+		ip TEXT NOT NULL,
+		action TEXT NOT NULL,
+		count INTEGER NOT NULL DEFAULT 0,
+		last_reset TIMESTAMP NOT NULL,
+		PRIMARY KEY (ip, action)
+	);
+
 	`
 	_, err = DB.Exec(schema)
 	if err != nil {
@@ -141,9 +151,22 @@ func StartScheduler() {
 	}
 }
 
+// UpdateSessions cleans up expired sessions and old rate limit records.
 func UpdateSessions() error {
-	_, err := DB.Exec("DELETE FROM sessions WHERE expiry < ?", time.Now())
-	return err
+	now := time.Now()
+
+	// delete expired sessions
+	if _, err := DB.Exec("DELETE FROM sessions WHERE expiry < ?", now); err != nil {
+		return fmt.Errorf("failed to delete expired sessions: %w", err)
+	}
+
+	// clean up old rate limit entries (older than 1 hour)
+	cutoff := now.Add(-1 * time.Hour)
+	if _, err := DB.Exec("DELETE FROM rate_limits WHERE last_reset < ?", cutoff); err != nil {
+		return fmt.Errorf("failed to delete old rate limit entries: %w", err)
+	}
+
+	return nil
 }
 
 func CheckIPAccountLimit(ip string, maxAccounts int) (bool, error) {
@@ -218,6 +241,31 @@ func VerifySession(sessionToken string) (*models.Session, error) {
 }
 
 func CreateSession(user *models.User, expiryDurationHours int) (*models.Session, error) {
+	// Check how many sessions the user already has
+	rows, err := DB.Query("SELECT id FROM sessions WHERE user_id = ? ORDER BY expiry ASC", user.ID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query sessions: %w", err)
+	}
+	defer rows.Close()
+
+	var sessionIDs []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("failed to scan session id: %w", err)
+		}
+		sessionIDs = append(sessionIDs, id)
+	}
+
+	// If the user already has 3 or more sessions, delete the oldest one
+	if len(sessionIDs) >= 3 {
+		oldestID := sessionIDs[0]
+		_, err := DB.Exec("DELETE FROM sessions WHERE id = ?", oldestID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to delete oldest session: %w", err)
+		}
+	}
+
 	// Generate a cryptographically secure random token
 	tokenBytes := make([]byte, 32) // 256-bit token
 	if _, err := rand.Read(tokenBytes); err != nil {
@@ -229,7 +277,7 @@ func CreateSession(user *models.User, expiryDurationHours int) (*models.Session,
 	expiry := time.Now().Add(time.Duration(expiryDurationHours) * time.Hour)
 
 	// Insert into DB
-	_, err := DB.Exec(
+	_, err = DB.Exec(
 		"INSERT INTO sessions (user_id, expiry, session_token) VALUES (?, ?, ?)",
 		user.ID, expiry, sessionToken,
 	)
@@ -280,12 +328,32 @@ func GetUserByUsername(username string) (*models.User, error) {
 
 // InsertServerMember inserts a new ServerMember and links it to a session
 func InsertServerMember(member models.ServerMember) error {
+	// Check if this session already has a server connection
+	var count int
+	err := DB.QueryRow(`
+		SELECT COUNT(*) 
+		FROM server_joins 
+		WHERE session_id = ?
+	`, member.SessionID).Scan(&count)
+	if err != nil {
+		return fmt.Errorf("failed to check existing session: %w", err)
+	}
+
+	if count > 0 {
+		return models.ErrUserAlreadyConnected
+	}
+
+	// Insert the new record
 	query := `
 		INSERT INTO server_joins (user_id, server_address, server_port, joined_username, session_id)
 		VALUES (?, ?, ?, ?, ?)
 	`
-	_, err := DB.Exec(query, member.UserID, member.ServerAddress, member.ServerPort, member.JoinedUsername, member.SessionID)
-	return err
+	_, err = DB.Exec(query, member.UserID, member.ServerAddress, member.ServerPort, member.JoinedUsername, member.SessionID)
+	if err != nil {
+		return fmt.Errorf("failed to insert server member: %w", err)
+	}
+
+	return nil
 }
 
 // RemoveServerMember removes a user from a specific server using a ServerMember struct
@@ -623,4 +691,48 @@ func DeleteRewardCode(codeID string) error {
 	}
 
 	return nil
+}
+
+// CheckAndUpdateRateLimit checks if the given IP/action pair is within the allowed requests per minute.
+func CheckAndUpdateRateLimit(ip, action string, ratelimit int) (bool, error) {
+	now := time.Now()
+	var count int
+	var lastReset time.Time
+
+	err := DB.QueryRow(`
+		SELECT count, last_reset FROM rate_limits WHERE ip = ? AND action = ?
+	`, ip, action).Scan(&count, &lastReset)
+
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			// no record yet insert a new one starting at 1
+			_, err = DB.Exec(`
+				INSERT INTO rate_limits (ip, action, count, last_reset)
+				VALUES (?, ?, 1, ?)
+			`, ip, action, now)
+			if err != nil {
+				return false, fmt.Errorf("failed to insert rate limit record: %w", err)
+			}
+			return true, nil
+		}
+		return false, fmt.Errorf("failed to query rate limit: %w", err)
+	}
+
+	// reset if a minute has passed
+	if now.Sub(lastReset) > time.Minute {
+		count = 0
+		lastReset = now
+	}
+
+	count++
+
+	// update the record
+	_, err = DB.Exec(`
+		UPDATE rate_limits SET count = ?, last_reset = ? WHERE ip = ? AND action = ?
+	`, count, lastReset, ip, action)
+	if err != nil {
+		return false, fmt.Errorf("failed to update rate limit: %w", err)
+	}
+
+	return count <= ratelimit, nil
 }
