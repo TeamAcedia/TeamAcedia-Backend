@@ -449,7 +449,7 @@ func GetServerPlayersHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !CheckRateLimit(w, r, "get_players", 20) {
+	if !CheckRateLimit(w, r, "get_players", 60) {
 		return
 	}
 
